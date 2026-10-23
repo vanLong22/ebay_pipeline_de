@@ -1,0 +1,1 @@
+Bạn viết code DAG trên máy tính ➔ Bạn dùng lệnh docker-compose up để Docker bật Airflow lên và chạy thử nghiệm (Local) ➔ Khi thấy code chạy chuẩn, bạn copy toàn bộ thư mục dự án đó (gồm file DAG và file docker-compose.yaml) lên máy chủ Cloud ➔ Trên Cloud, bạn lại gõ lệnh docker-compose up ➔ Hệ thống tự động kích hoạt y hệt như dưới máy bạn và chạy 24/7.

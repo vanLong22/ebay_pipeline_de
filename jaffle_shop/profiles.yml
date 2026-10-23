@@ -1,0 +1,14 @@
+jaffle_shop:                    # Tên dự án dbt khớp với trường 'profile' trong dbt_project.yml
+  target: dev                   # Môi trường mặc định khi chạy lệnh
+  outputs:
+    dev:
+      type: snowflake           # Loại kho dữ liệu bạn sử dụng
+      account: OXWUVAS-PY18788  # Ví dụ: xy12345.ap-southeast-1
+      
+      user: Long22              # Tên đăng nhập Snowflake của bạn
+      password: "#18072004LvLvL"   # Mật khẩu đăng nhập
+      role: ACCOUNTADMIN        # Role quyền hạn (hoặc sysadmin)
+      database: EBAY_PROJECT_DB    # Tên Database sẽ chứa dữ liệu dbt tạo ra
+      warehouse: COMPUTE_WH     # Kho tính toán (Virtual Warehouse) của Snowflake
+      schema: silver            # Schema mặc định làm việc
+      threads: 4                # Số luồng chạy song song khi build model

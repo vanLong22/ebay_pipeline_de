@@ -1,0 +1,114 @@
+{{ config(materialized='table') }}
+
+WITH source_data AS (
+    SELECT *
+    FROM {{ ref('ebay_data_cleaned') }}
+),
+
+parsed AS (
+    SELECT
+        *,
+
+        TRY_PARSE_JSON(
+            TO_VARCHAR(LEAF_CATEGORY_IDS_RAW)
+        ) AS LEAF_CATEGORY_IDS_JSON,
+
+        TRY_PARSE_JSON(
+            TO_VARCHAR(CATEGORIES_RAW)
+        ) AS CATEGORIES_JSON,
+
+        TRY_PARSE_JSON(
+            TO_VARCHAR(BUYING_OPTIONS)
+        ) AS BUYING_OPTIONS_JSON,
+
+        TRY_PARSE_JSON(
+            TO_VARCHAR(SHIPPING_OPTIONS_RAW)
+        ) AS SHIPPING_OPTIONS_JSON
+
+    FROM source_data
+)
+
+SELECT
+    -- Giữ các cột khác, bỏ 4 cột JSON gốc và cột trung gian
+    p.* EXCLUDE (
+        LEAF_CATEGORY_IDS_RAW,
+        CATEGORIES_RAW,
+        BUYING_OPTIONS,
+        SHIPPING_OPTIONS_RAW,
+        LEAF_CATEGORY_IDS_JSON,
+        CATEGORIES_JSON,
+        BUYING_OPTIONS_JSON,
+        SHIPPING_OPTIONS_JSON
+    ),
+
+    -- Leaf category IDs
+    p.LEAF_CATEGORY_IDS_JSON[0]::VARCHAR AS LEAF_CATEGORY_ID_1,
+    p.LEAF_CATEGORY_IDS_JSON[1]::VARCHAR AS LEAF_CATEGORY_ID_2,
+    p.LEAF_CATEGORY_IDS_JSON[2]::VARCHAR AS LEAF_CATEGORY_ID_3,
+
+    -- Categories
+    p.CATEGORIES_JSON[0]:categoryId::VARCHAR
+        AS CATEGORY_1_ID,
+    p.CATEGORIES_JSON[0]:categoryName::VARCHAR
+        AS CATEGORY_1_NAME,
+
+    p.CATEGORIES_JSON[1]:categoryId::VARCHAR
+        AS CATEGORY_2_ID,
+    p.CATEGORIES_JSON[1]:categoryName::VARCHAR
+        AS CATEGORY_2_NAME,
+
+    p.CATEGORIES_JSON[2]:categoryId::VARCHAR
+        AS CATEGORY_3_ID,
+    p.CATEGORIES_JSON[2]:categoryName::VARCHAR
+        AS CATEGORY_3_NAME,
+
+    p.CATEGORIES_JSON[3]:categoryId::VARCHAR
+        AS CATEGORY_4_ID,
+    p.CATEGORIES_JSON[3]:categoryName::VARCHAR
+        AS CATEGORY_4_NAME,
+
+    -- Buying options
+    p.BUYING_OPTIONS_JSON[0]::VARCHAR AS BUYING_OPTION_1,
+    p.BUYING_OPTIONS_JSON[1]::VARCHAR AS BUYING_OPTION_2,
+    p.BUYING_OPTIONS_JSON[2]::VARCHAR AS BUYING_OPTION_3,
+
+    -- Shipping option đầu tiên
+    p.SHIPPING_OPTIONS_JSON[0]:shippingCost:value::NUMBER(12,2)
+        AS SHIPPING_COST_1,
+
+    p.SHIPPING_OPTIONS_JSON[0]:shippingCost:currency::VARCHAR
+        AS SHIPPING_CURRENCY_1,
+
+    p.SHIPPING_OPTIONS_JSON[0]:shippingCostType::VARCHAR
+        AS SHIPPING_COST_TYPE_1,
+
+    TRY_TO_TIMESTAMP_TZ(
+        p.SHIPPING_OPTIONS_JSON[0]:minEstimatedDeliveryDate::VARCHAR
+    ) AS MIN_ESTIMATED_DELIVERY_1,
+
+    TRY_TO_TIMESTAMP_TZ(
+        p.SHIPPING_OPTIONS_JSON[0]:maxEstimatedDeliveryDate::VARCHAR
+    ) AS MAX_ESTIMATED_DELIVERY_1,
+
+    -- Cờ phát hiện JSON không parse được
+    (
+        p.LEAF_CATEGORY_IDS_RAW IS NOT NULL
+        AND p.LEAF_CATEGORY_IDS_JSON IS NULL
+    ) AS LEAF_CATEGORY_IDS_JSON_PARSE_FAILED,
+
+    (
+        p.CATEGORIES_RAW IS NOT NULL
+        AND p.CATEGORIES_JSON IS NULL
+    ) AS CATEGORIES_JSON_PARSE_FAILED,
+
+    (
+        p.BUYING_OPTIONS IS NOT NULL
+        AND p.BUYING_OPTIONS_JSON IS NULL
+    ) AS BUYING_OPTIONS_JSON_PARSE_FAILED,
+
+    (
+        p.SHIPPING_OPTIONS_RAW IS NOT NULL
+        AND p.SHIPPING_OPTIONS_JSON IS NULL
+    ) AS SHIPPING_OPTIONS_JSON_PARSE_FAILED
+
+FROM parsed p
