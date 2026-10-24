@@ -31,4 +31,5 @@ jobs:
 
       - name: Check dbt syntax (dbt parse)
         run: |
+          dbt deps    
           dbt parse --profiles-dir .
