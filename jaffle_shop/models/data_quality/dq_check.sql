@@ -52,7 +52,7 @@ row_level_flags AS (
              AND COUNT(*) OVER (PARTITION BY item_id) > 1
             THEN 1 ELSE 0
         END AS flag_duplicate_item_id,
-
+   
         CASE
             WHEN item_id IS NOT NULL
              AND COUNT(*) OVER (
