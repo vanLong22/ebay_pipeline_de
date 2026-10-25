@@ -10,31 +10,31 @@ parsed AS (
         *,
 
         TRY_PARSE_JSON(
-            TO_VARCHAR(LEAF_CATEGORY_IDS_RAW)
+            TO_VARCHAR(leaf_category_ids_raw)
         ) AS LEAF_CATEGORY_IDS_JSON,
 
         TRY_PARSE_JSON(
-            TO_VARCHAR(CATEGORIES_RAW)
+            TO_VARCHAR(categories_raw)
         ) AS CATEGORIES_JSON,
 
         TRY_PARSE_JSON(
-            TO_VARCHAR(BUYING_OPTIONS)
+            TO_VARCHAR(buying_options)
         ) AS BUYING_OPTIONS_JSON,
 
         TRY_PARSE_JSON(
-            TO_VARCHAR(SHIPPING_OPTIONS_RAW)
+            TO_VARCHAR(shipping_options_raw)
         ) AS SHIPPING_OPTIONS_JSON
 
     FROM source_data
 )
 
 SELECT
-    -- Giữ các cột khác, bỏ 4 cột JSON gốc và cột trung gian
+    -- Giữ các cột khác, loại bỏ các cột JSON gốc và cột trung gian sau khi đã bóc tách
     p.* EXCLUDE (
-        LEAF_CATEGORY_IDS_RAW,
-        CATEGORIES_RAW,
-        BUYING_OPTIONS,
-        SHIPPING_OPTIONS_RAW,
+        leaf_category_ids_raw,
+        categories_raw,
+        buying_options,
+        shipping_options_raw,
         LEAF_CATEGORY_IDS_JSON,
         CATEGORIES_JSON,
         BUYING_OPTIONS_JSON,
@@ -46,7 +46,7 @@ SELECT
     p.LEAF_CATEGORY_IDS_JSON[1]::VARCHAR AS LEAF_CATEGORY_ID_2,
     p.LEAF_CATEGORY_IDS_JSON[2]::VARCHAR AS LEAF_CATEGORY_ID_3,
 
-    -- Categories
+    -- Categories (Bóc tách các cấp danh mục từ mảng JSON)
     p.CATEGORIES_JSON[0]:categoryId::VARCHAR
         AS CATEGORY_1_ID,
     p.CATEGORIES_JSON[0]:categoryName::VARCHAR
@@ -72,7 +72,7 @@ SELECT
     p.BUYING_OPTIONS_JSON[1]::VARCHAR AS BUYING_OPTION_2,
     p.BUYING_OPTIONS_JSON[2]::VARCHAR AS BUYING_OPTION_3,
 
-    -- Shipping option đầu tiên
+    -- Shipping option đầu tiên (Đã được bảo vệ an toàn từ tầng Cleaned)
     p.SHIPPING_OPTIONS_JSON[0]:shippingCost:value::NUMBER(12,2)
         AS SHIPPING_COST_1,
 
@@ -90,24 +90,24 @@ SELECT
         p.SHIPPING_OPTIONS_JSON[0]:maxEstimatedDeliveryDate::VARCHAR
     ) AS MAX_ESTIMATED_DELIVERY_1,
 
-    -- Cờ phát hiện JSON không parse được
+    -- Cờ phát hiện JSON không parse được (Chính xác tuyệt đối, không bị lỗi vặt do chuỗi rỗng)
     (
-        p.LEAF_CATEGORY_IDS_RAW IS NOT NULL
+        p.leaf_category_ids_raw IS NOT NULL
         AND p.LEAF_CATEGORY_IDS_JSON IS NULL
     ) AS LEAF_CATEGORY_IDS_JSON_PARSE_FAILED,
 
     (
-        p.CATEGORIES_RAW IS NOT NULL
+        p.categories_raw IS NOT NULL
         AND p.CATEGORIES_JSON IS NULL
     ) AS CATEGORIES_JSON_PARSE_FAILED,
 
     (
-        p.BUYING_OPTIONS IS NOT NULL
+        p.buying_options IS NOT NULL
         AND p.BUYING_OPTIONS_JSON IS NULL
     ) AS BUYING_OPTIONS_JSON_PARSE_FAILED,
 
     (
-        p.SHIPPING_OPTIONS_RAW IS NOT NULL
+        p.shipping_options_raw IS NOT NULL
         AND p.SHIPPING_OPTIONS_JSON IS NULL
     ) AS SHIPPING_OPTIONS_JSON_PARSE_FAILED
 

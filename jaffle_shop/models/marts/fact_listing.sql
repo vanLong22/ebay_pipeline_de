@@ -1,123 +1,49 @@
 {{ config(
-    materialized = 'incremental',
-    unique_key = ['item_id', 'snapshot_date']
+    materialized = 'table'
 ) }}
 
-with source_data as (
-    select 
+WITH source_data AS (
+    SELECT 
         item_id,
-        legacy_item_id,
-        seller_username,
-        condition_id,
-        item_location_country,
-        item_location_postal_code,
         scraped_category_id,
-        price_value,
-        price_currency,
-        price_converted_from_value,
-        price_converted_from_currency,
-        bid_count,
-        current_bid_price_value,
-        current_bid_price_currency,
-        current_bid_price_converted_from_value,
-        current_bid_price_converted_from_currency,
-        marketing_price_original_price_value,
-        marketing_price_discount_amount_value,
-        marketing_price_discount_percentage,
-        expected_clean_price,
-        marketing_price_treatment,
-        seller_feedback_percentage,
-        seller_feedback_score,
-        top_rated_buying_experience,
-        shipping_cost_1,
-        shipping_currency_1,
-        shipping_cost_type_1,
-        min_estimated_delivery_1,
-        max_estimated_delivery_1,
-        buying_option_1,
-        buying_option_2,
-        buying_option_3,
-        item_origin_date,
+        condition_id,
+        seller_username,
         item_creation_date,
-        item_end_date,
-        is_adult_only,
-        priority_listing,
-        price_display_condition,
         load_timestamp,
-        silver_cleansed_at,
-        -- Khai báo cột snapshot_date tại đây để dùng cho partition và các bước sau
-        to_date(load_timestamp) as snapshot_date
-    from {{ ref('ebay_data_json_expanded') }}
-    qualify row_number() over(
-        partition by item_id, to_date(load_timestamp)
-        order by load_timestamp desc,
-                 silver_cleansed_at desc
+        price_value,
+        marketing_price_original_price_value,
+        marketing_price_discount_percentage
+    FROM {{ ref('ebay_data_json_expanded') }}
+    QUALIFY ROW_NUMBER() OVER(
+        PARTITION BY item_id, TO_DATE(load_timestamp)
+        ORDER BY load_timestamp DESC, silver_cleansed_at DESC
     ) = 1
 )
 
-select
-    -- Grain: one ITEM_ID per snapshot date
-    HASH(item_id) AS listing_key,
-    TO_NUMBER(TO_CHAR(snapshot_date, 'YYYYMMDD')) AS date_key,
+SELECT
+    -- Khóa định danh dòng duy nhất
+    HASH(s.item_id, TO_DATE(s.load_timestamp)) AS listing_key,
+    s.item_id,
+    
+    -- Khóa ngoại trỏ tới các bảng Dim
+    HASH(s.scraped_category_id)             AS category_key,
+    HASH(COALESCE(s.condition_id, -1))      AS condition_key,
+    HASH(s.seller_username)                 AS seller_key,
+    
+    -- Khóa thời gian (Date Keys dạng YYYYMMDD)
+    COALESCE(TO_NUMBER(TO_CHAR(TO_DATE(s.item_creation_date), 'YYYYMMDD')), 19700101) AS creation_date_key,
+    TO_NUMBER(TO_CHAR(TO_DATE(s.load_timestamp), 'YYYYMMDD')) AS snapshot_date_key,
 
-    HASH(seller_username) AS seller_key,
-    HASH(condition_id) AS condition_key,
-    HASH(item_location_country, item_location_postal_code) AS location_key,
-    HASH(scraped_category_id) AS category_key,
-    HASH(buying_option_1) AS buying_option_key,
+    -- Các chỉ số đo lường (Measures)
+    s.price_value AS price,
+    s.marketing_price_original_price_value AS original_price,
+    s.marketing_price_discount_percentage AS discount_pct,
+    
+    -- Cờ tính toán giảm giá
+    CASE 
+        WHEN s.marketing_price_discount_percentage > 0 THEN TRUE 
+        ELSE FALSE 
+    END AS is_discounted
 
-    -- Business identifiers
-    item_id,
-    legacy_item_id,
-    snapshot_date,
-
-    -- Listing price
-    price_value,
-    price_currency,
-    price_converted_from_value,
-    price_converted_from_currency,
-
-    -- Bidding
-    bid_count,
-    current_bid_price_value,
-    current_bid_price_currency,
-    current_bid_price_converted_from_value,
-    current_bid_price_converted_from_currency,
-
-    -- Discount
-    marketing_price_original_price_value,
-    marketing_price_discount_amount_value,
-    marketing_price_discount_percentage,
-    expected_clean_price,
-    marketing_price_treatment,
-
-    -- Seller metrics at snapshot time
-    seller_feedback_percentage,
-    seller_feedback_score,
-    top_rated_buying_experience,
-
-    -- Shipping 
-    shipping_cost_1,
-    shipping_currency_1,
-    shipping_cost_type_1,
-    min_estimated_delivery_1,
-    max_estimated_delivery_1,
-
-    -- Additional buying options
-    buying_option_1,
-    buying_option_2,
-    buying_option_3,
-
-    -- Listing attributes and dates
-    item_origin_date,
-    item_creation_date,
-    item_end_date,
-    is_adult_only,
-    priority_listing,
-    price_display_condition,
-
-    -- Data lineage
-    load_timestamp,
-    silver_cleansed_at
-
-from source_data
+FROM source_data s
+WHERE s.item_id IS NOT NULL
