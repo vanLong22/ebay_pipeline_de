@@ -1,87 +1,123 @@
-{{config(materialized = 'table')}}
+{{ config(
+    materialized = 'incremental',
+    unique_key = ['item_id', 'snapshot_date']
+) }}
 
 with source_data as (
-    select * 
-    from {{ref('ebay_data_json_expanded')}}
+    select 
+        item_id,
+        legacy_item_id,
+        seller_username,
+        condition_id,
+        item_location_country,
+        item_location_postal_code,
+        scraped_category_id,
+        price_value,
+        price_currency,
+        price_converted_from_value,
+        price_converted_from_currency,
+        bid_count,
+        current_bid_price_value,
+        current_bid_price_currency,
+        current_bid_price_converted_from_value,
+        current_bid_price_converted_from_currency,
+        marketing_price_original_price_value,
+        marketing_price_discount_amount_value,
+        marketing_price_discount_percentage,
+        expected_clean_price,
+        marketing_price_treatment,
+        seller_feedback_percentage,
+        seller_feedback_score,
+        top_rated_buying_experience,
+        shipping_cost_1,
+        shipping_currency_1,
+        shipping_cost_type_1,
+        min_estimated_delivery_1,
+        max_estimated_delivery_1,
+        buying_option_1,
+        buying_option_2,
+        buying_option_3,
+        item_origin_date,
+        item_creation_date,
+        item_end_date,
+        is_adult_only,
+        priority_listing,
+        price_display_condition,
+        load_timestamp,
+        silver_cleansed_at,
+        -- Khai báo cột snapshot_date tại đây để dùng cho partition và các bước sau
+        to_date(load_timestamp) as snapshot_date
+    from {{ ref('ebay_data_json_expanded') }}
     qualify row_number() over(
         partition by item_id, to_date(load_timestamp)
         order by load_timestamp desc,
-        silver_cleansed_at desc
+                 silver_cleansed_at desc
     ) = 1
-),
-
-fact_source as(
-    select 
-        s.*,
-        to_date(s.load_timestamp) as snapshot_date
-    from source_data s 
 )
 
-
-SELECT
+select
     -- Grain: one ITEM_ID per snapshot date
-    HASH(s.ITEM_ID) AS LISTING_KEY,
-    TO_NUMBER(TO_CHAR(s.SNAPSHOT_DATE, 'YYYYMMDD')) AS DATE_KEY,
+    HASH(item_id) AS listing_key,
+    TO_NUMBER(TO_CHAR(snapshot_date, 'YYYYMMDD')) AS date_key,
 
-    HASH(s.SELLER_USERNAME) AS SELLER_KEY,
-    HASH(s.CONDITION_ID) AS CONDITION_KEY,
-    HASH(s.ITEM_LOCATION_COUNTRY, s.ITEM_LOCATION_POSTAL_CODE)
-        AS LOCATION_KEY,
-    HASH(s.SCRAPED_CATEGORY_ID) AS CATEGORY_KEY,
-    HASH(s.BUYING_OPTION_1) AS BUYING_OPTION_KEY,
+    HASH(seller_username) AS seller_key,
+    HASH(condition_id) AS condition_key,
+    HASH(item_location_country, item_location_postal_code) AS location_key,
+    HASH(scraped_category_id) AS category_key,
+    HASH(buying_option_1) AS buying_option_key,
 
     -- Business identifiers
-    s.ITEM_ID,
-    s.LEGACY_ITEM_ID,
-    s.SNAPSHOT_DATE,
+    item_id,
+    legacy_item_id,
+    snapshot_date,
 
     -- Listing price
-    s.PRICE_VALUE,
-    s.PRICE_CURRENCY,
-    s.PRICE_CONVERTED_FROM_VALUE,
-    s.PRICE_CONVERTED_FROM_CURRENCY,
+    price_value,
+    price_currency,
+    price_converted_from_value,
+    price_converted_from_currency,
 
     -- Bidding
-    s.BID_COUNT,
-    s.CURRENT_BID_PRICE_VALUE,
-    s.CURRENT_BID_PRICE_CURRENCY,
-    s.CURRENT_BID_PRICE_CONVERTED_FROM_VALUE,
-    s.CURRENT_BID_PRICE_CONVERTED_FROM_CURRENCY,
+    bid_count,
+    current_bid_price_value,
+    current_bid_price_currency,
+    current_bid_price_converted_from_value,
+    current_bid_price_converted_from_currency,
 
     -- Discount
-    s.MARKETING_PRICE_ORIGINAL_PRICE_VALUE,
-    s.MARKETING_PRICE_DISCOUNT_AMOUNT_VALUE,
-    s.MARKETING_PRICE_DISCOUNT_PERCENTAGE,
-    s.EXPECTED_CLEAN_PRICE,
-    s.MARKETING_PRICE_TREATMENT,
+    marketing_price_original_price_value,
+    marketing_price_discount_amount_value,
+    marketing_price_discount_percentage,
+    expected_clean_price,
+    marketing_price_treatment,
 
     -- Seller metrics at snapshot time
-    s.SELLER_FEEDBACK_PERCENTAGE,
-    s.SELLER_FEEDBACK_SCORE,
-    s.TOP_RATED_BUYING_EXPERIENCE,
+    seller_feedback_percentage,
+    seller_feedback_score,
+    top_rated_buying_experience,
 
-    -- Shipping stays in the main fact
-    s.SHIPPING_COST_1,
-    s.SHIPPING_CURRENCY_1,
-    s.SHIPPING_COST_TYPE_1,
-    s.MIN_ESTIMATED_DELIVERY_1,
-    s.MAX_ESTIMATED_DELIVERY_1,
+    -- Shipping 
+    shipping_cost_1,
+    shipping_currency_1,
+    shipping_cost_type_1,
+    min_estimated_delivery_1,
+    max_estimated_delivery_1,
 
     -- Additional buying options
-    s.BUYING_OPTION_1,
-    s.BUYING_OPTION_2,
-    s.BUYING_OPTION_3,
+    buying_option_1,
+    buying_option_2,
+    buying_option_3,
 
     -- Listing attributes and dates
-    s.ITEM_ORIGIN_DATE,
-    s.ITEM_CREATION_DATE,
-    s.ITEM_END_DATE,
-    s.IS_ADULT_ONLY,
-    s.PRIORITY_LISTING,
-    s.PRICE_DISPLAY_CONDITION,
+    item_origin_date,
+    item_creation_date,
+    item_end_date,
+    is_adult_only,
+    priority_listing,
+    price_display_condition,
 
     -- Data lineage
-    s.LOAD_TIMESTAMP,
-    s.SILVER_CLEANSED_AT
+    load_timestamp,
+    silver_cleansed_at
 
-FROM fact_source s
+from source_data
