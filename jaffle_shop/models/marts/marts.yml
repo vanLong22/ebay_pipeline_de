@@ -1,0 +1,65 @@
+version: 2
+
+models:
+  - name: dim_seller
+    description: "Bảng chiều chứa thông tin chi tiết về người bán trên eBay."
+    columns:
+      - name: seller_key
+        description: "Khóa chính tự sinh bằng HASH cho người bán."
+        tests:
+          - unique
+          - not_null
+      - name: seller_username
+        description: "Tên tài khoản người bán."
+
+  - name: dim_condition
+    description: "Bảng chiều chứa các loại tình trạng hàng hóa."
+    columns:
+      - name: condition_key
+        description: "Khóa chính của tình trạng sản phẩm."
+        tests:
+          - unique
+          - not_null
+
+  - name: dim_category
+    description: "Bảng chiều phân cấp danh mục sản phẩm."
+    columns:
+      - name: category_key
+        description: "Khóa chính của danh mục."
+        tests:
+          - unique
+          - not_null
+
+  - name: fact_listing
+    description: "Bảng sự kiện ghi nhận thông tin tin đăng theo từng lần snapshot."
+    columns:
+      - name: listing_key
+        description: "Khóa chính duy nhất của mỗi dòng sự kiện."
+        tests:
+          - unique
+          - not_null
+      
+      # Cập nhật theo cú pháp chuẩn mới (đưa vào khối arguments:)
+      - name: seller_key
+        description: "Khóa ngoại trỏ tới dim_seller."
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_seller')
+                field: seller_key
+
+      - name: condition_key
+        description: "Khóa ngoại trỏ tới dim_condition."
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_condition')
+                field: condition_key
+
+      - name: category_key
+        description: "Khóa ngoại trỏ tới dim_category."
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_category')
+                field: category_key
