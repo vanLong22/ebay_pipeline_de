@@ -39,5 +39,6 @@ jobs:
           SNOWFLAKE_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE }}
         run: |
           cd jaffle_shop
+          dbt deps
           dbt build --select +dq_check ebay_data_cleaned ebay_data_json_expanded marts
           dbt test --select marts
