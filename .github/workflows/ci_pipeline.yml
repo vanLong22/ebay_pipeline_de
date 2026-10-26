@@ -1,20 +1,20 @@
-name: CI/CD Pipeline for dbt & SQL Quality
+name: Full-Automated eBay dbt Pipeline
 
 on:
   push:
-    branches: [ main, develop ]
+    branches:
+      - 'feature/**'    # Tự động chạy khi push lên bất kỳ nhánh feature nào
+      - 'develop'       # Tự động chạy khi push/merge vào develop
+      - 'main'          # Tự động chạy khi push/merge vào main
   pull_request:
-    branches: [ main, develop ]
+    branches:
+      - 'develop'
+      - 'main'
 
 jobs:
-  run-dbt-tests:
-    name: Run dbt Linter and Tests
+  dbt-ci-cd-workflow:
     runs-on: ubuntu-latest
-
-    defaults:
-      run:
-        working-directory: ./jaffle_shop
-
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -26,10 +26,18 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install dbt-snowflake sqlfluff sqlfluff-templater-dbt
+          pip install --upgrade pip
+          pip install dbt-snowflake
 
-      - name: Check dbt syntax (dbt parse)
+      - name: Run dbt build and test (Validation Gate)
+        env:
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+          SNOWFLAKE_ROLE: ${{ secrets.SNOWFLAKE_ROLE }}
+          SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+          SNOWFLAKE_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE }}
         run: |
-          dbt deps    
-          dbt parse --profiles-dir .
+          cd jaffle_shop
+          dbt build --select +dq_check ebay_data_cleaned ebay_data_json_expanded marts
+          dbt test --select marts

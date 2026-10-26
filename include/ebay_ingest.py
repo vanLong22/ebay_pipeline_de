@@ -397,7 +397,7 @@ def upload_parquet_partitioned_to_s3(data_list):
 
     # Tạo đường dẫn S3 theo đúng cấu trúc partition yêu cầu
     s3_prefix = f"{BASE_PREFIX}/year={year}/month={month}/day={day}"
-    file_name = f"ebay_items_{timestamp_str}.parquet"
+    file_name = f"ebay_raw_data_{timestamp_str}.parquet"
     s3_object_key = f"{s3_prefix}/{file_name}"
 
     # 3. Chuyển đổi DataFrame sang định dạng Parquet dưới dạng bộ nhớ đệm (Bytes IO)
