@@ -1,10 +1,9 @@
-{{
-    config(materialized = 'table')
-}}
+{{ config(materialized = 'table') }}
 
-SELECT DISTINCT
-    HASH(SCRAPED_CATEGORY_ID) AS CATEGORY_KEY,
-    SCRAPED_CATEGORY_ID AS CATEGORY_ID,
-    SCRAPED_CATEGORY_NAME AS CATEGORY_NAME
+SELECT
+    HASH(scraped_category_id)      AS category_key,
+    scraped_category_id            AS category_l1_id,
+    MAX(scraped_category_name)     AS category_l1_name
 FROM {{ ref('ebay_data_json_expanded') }}
-WHERE SCRAPED_CATEGORY_ID IS NOT NULL
+WHERE scraped_category_id IS NOT NULL
+GROUP BY scraped_category_id
