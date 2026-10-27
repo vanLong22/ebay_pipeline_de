@@ -15,7 +15,7 @@ WITH ranked_sellers AS (
 
 SELECT
     HASH(seller_username) AS seller_key,
-    seller_username,
+    seller_username,   
     seller_feedback_percentage,
     seller_feedback_score
 FROM ranked_sellers

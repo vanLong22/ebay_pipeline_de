@@ -12,7 +12,7 @@ DBT_PROJECT_DIR = os.path.abspath(os.path.join(DAG_DIR, '../jaffle_shop'))
 DBT_PROFILES_DIR = DBT_PROJECT_DIR
 
 sys.path.append(os.path.abspath(os.path.join(DAG_DIR, '../include')))
-from include.ebay_ingest import scrape_all_ebay_categories, upload_raw_to_s3
+from include.ebay_ingest import scrape_all_ebay_categories, upload_parquet_partitioned_to_s3
 
 default_args = {
     'owner': 'ebay_data_engineer',
@@ -24,9 +24,15 @@ default_args = {
     'retry_delay': timedelta(minutes=5),
 }
 
-def run_ebay_pipeline():
-    raw_data = scrape_all_ebay_categories(max_items_per_category=200)
-    upload_raw_to_s3(raw_data)
+# Cập nhật lại đoạn này trong file DAG của bạn:
+def run_ebay_pipeline(**kwargs):
+    ds = kwargs['ds'] 
+    
+    execution_date_obj = datetime.strptime(ds, '%Y-%m-%d')
+    
+    raw_data = scrape_all_ebay_categories() # Nếu hàm này cần truyền giới hạn limit, bạn giữ nguyên.
+    upload_parquet_partitioned_to_s3(raw_data, target_date=execution_date_obj)
+
 
 with DAG(
     dag_id='ebay_end_to_end_pipeline',
@@ -42,6 +48,7 @@ with DAG(
     ingest_bronze_task = PythonOperator(
         task_id='scrape_and_push_to_s3_bronze',
         python_callable=run_ebay_pipeline,
+        provide_context=True, # Bắt buộc phải có để Airflow truyền các biến hệ thống như ds, execution_date vào hàm
     )
 
     # Task 2: Gọi lệnh COPY INTO trên Snowflake để load dữ liệu từ S3 vào bảng raw_ebay_listings (Bronze)
@@ -65,18 +72,11 @@ with DAG(
         """,
     )
 
-
-    # Task 3: Chạy dbt build để biến đổi dữ liệu (Staging -> Cleansed -> Marts Kimball)
-    dbt_build_marts_task = BashOperator(
-        task_id='dbt_build_marts',
-        bash_command=f'dbt build --project-dir {DBT_PROJECT_DIR} --profiles-dir {DBT_PROFILES_DIR} --select stg_ebay_raw ebay_data_cleaned dq_check marts',
+    # Task 3: Chạy dbt test kiểm tra toàn vẹn tầng Marts
+    dbt_build_pipeline = BashOperator(
+        task_id='dbt_build_entire_pipeline',
+        bash_command=f'dbt build --project-dir {DBT_PROJECT_DIR} --profiles-dir {DBT_PROFILES_DIR} --select +dq_check ebay_data_cleaned ebay_data_json_expanded marts',
     )
 
-    # Task 4: Chạy dbt test kiểm tra toàn vẹn tầng Marts
-    dbt_test_marts_task = BashOperator(
-        task_id='dbt_test_marts',
-        bash_command=f'dbt test --project-dir {DBT_PROJECT_DIR} --profiles-dir {DBT_PROFILES_DIR} --select marts',
-    )
-
-    # Thiết lập luồng chạy tự động tuần tự (Lineage)
-    ingest_bronze_task >> load_to_snowflake_bronze >> dbt_build_marts_task >> dbt_test_marts_task
+    # Cập nhật lại luồng chạy thiết lập ngắn gọn hơn
+    ingest_bronze_task >> load_to_snowflake_bronze >> dbt_build_pipeline
