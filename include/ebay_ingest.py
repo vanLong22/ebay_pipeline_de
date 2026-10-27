@@ -366,10 +366,11 @@ def ensure_s3_bucket_exists(s3_client, bucket_name, region):
             raise e
 
 
-def upload_parquet_partitioned_to_s3(data_list):
+# Tìm đến hàm này trong file ebay_ingest.py của bạn và cập nhật lại:
+def upload_parquet_partitioned_to_s3(data_list, target_date=None):
     """
-    Chuyển đổi dữ liệu JSON sang Parquet, phân chia thư mục theo year/month/day
-    và đẩy lên S3 theo cấu trúc: ebay-data-de/raw-data/ebay_items/year=YYYY/month=MM/day=DD/
+    Chuyển đổi dữ liệu JSON sang Parquet, phân chia thư mục theo YYYY/MM/DD
+    Dựa trên ngày được truyền vào (target_date) thay vì datetime.now() cố định.
     """
     if not data_list:
         print("Không có dữ liệu để đẩy lên S3.")
@@ -382,25 +383,27 @@ def upload_parquet_partitioned_to_s3(data_list):
         region_name=AWS_REGION
     )
 
-    # 1. Đảm bảo S3 Bucket tồn tại trước khi upload
+    # 1. Đảm bảo S3 Bucket tồn tại
     ensure_s3_bucket_exists(s3_client, BUCKET_NAME, AWS_REGION)
 
-    # 2. Chuyển đổi List Dictionary thành Pandas DataFrame
+    # 2. Chuyển đổi sang Pandas DataFrame
     df = pd.DataFrame(data_list)
 
-    # Lấy thông tin thời gian hiện tại để phân vùng (Partition)
-    now = datetime.now()
-    year = now.strftime("%Y")
-    month = now.strftime("%m")
-    day = now.strftime("%d")
-    timestamp_str = now.strftime("%H%M%S")
+    # CRITICAL FIX: Kiểm tra nếu có target_date từ Airflow truyền vào thì dùng, không thì mới lấy hiện tại
+    if target_date is None:
+        target_date = datetime.now()
+        
+    year = target_date.strftime("%Y")
+    month = target_date.strftime("%m")
+    day = target_date.strftime("%d")
+    timestamp_str = datetime.now().strftime("%H%M%S") # Giữ timestamp giờ chạy thật để tránh đè file
 
-    # Tạo đường dẫn S3 theo đúng cấu trúc partition yêu cầu
+    # Tạo đường dẫn S3 chuẩn cấu trúc partition
     s3_prefix = f"{BASE_PREFIX}/year={year}/month={month}/day={day}"
     file_name = f"ebay_raw_data_{timestamp_str}.parquet"
     s3_object_key = f"{s3_prefix}/{file_name}"
 
-    # 3. Chuyển đổi DataFrame sang định dạng Parquet dưới dạng bộ nhớ đệm (Bytes IO)
+    # 3. Chuyển đổi DataFrame sang định dạng Parquet qua bộ nhớ đệm
     parquet_buffer = io.BytesIO()
     df.to_parquet(parquet_buffer, engine='pyarrow', compression='snappy', index=False)
     parquet_buffer.seek(0)
@@ -416,6 +419,7 @@ def upload_parquet_partitioned_to_s3(data_list):
         print(f"✅ Đã đẩy thành công {len(data_list)} bản ghi dạng Parquet lên S3 (Partition: year={year}/month={month}/day={day})!")
     except Exception as e:
         print(f"❌ Lỗi khi tải file Parquet lên S3: {e}")
+
 
 
 if __name__ == "__main__":

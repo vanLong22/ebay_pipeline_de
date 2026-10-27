@@ -1,144 +1,346 @@
-Bạn viết code DAG trên máy tính ➔ Bạn dùng lệnh docker-compose up để Docker bật Airflow lên và chạy thử nghiệm (Local) ➔ Khi thấy code chạy chuẩn, bạn copy toàn bộ thư mục dự án đó (gồm file DAG và file docker-compose.yaml) lên máy chủ Cloud ➔ Trên Cloud, bạn lại gõ lệnh docker-compose up ➔ Hệ thống tự động kích hoạt y hệt như dưới máy bạn và chạy 24/7.
+# eBay E-Commerce Intelligence & Data Pipeline
 
-
-
-
--- -- Dùng TRANSIENT TABLE để tiết kiệm tối đa chi phí lưu trữ và Fail-safe
--- CREATE OR REPLACE TRANSIENT TABLE raw_ebay_listings (
---     raw_data VARIANT,                                       -- Cột chứa nội dung JSON thô
---     src_file_name VARCHAR,                                    -- Tên file nguồn trên S3 để đối chiếu khi lỗi
---     load_timestamp TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()  -- Thời gian nạp vào kho
--- );
-dùng cách này tạo table thì sau 1 thời gian nó sẽ tự động xóa khỏi schema bronze của snowflake phải ko 
-
-
-========================================
-
-tức là nếu tôi cào dữ liệu mới hôm nay, nó sẽ so sánh unique_key là item_id với dữ iệu đã cào được vào hôm trước , nếu khác thì thêm và cập nhật ở bảng dữ liệu nằm trong silver và gold schema của snowflake đúng ko. 
-
-1. Các bản ghi mới được lưu ở đâu?Tất cả dữ liệu (bao gồm cả dữ liệu cũ từ hôm qua, dữ liệu cũ được cập nhật lại, và các bản ghi mang item_id mới tinh của hôm nay) đều được lưu chung vào cùng một bảng Silver duy nhất (ví dụ: bảng ebay_data_cleaned) trên Snowflake.Bạn không phải quản lý file thủ công hay sợ bị mất dữ liệu cũ, vì Snowflake là một Data Warehouse dạng cột, nó tự động quản lý các khối dữ liệu (micro-partitions) bên dưới.2. Bản chất của chiến lược merge (Upsert) hoạt động như thế nào?Không chỉ đơn thuần là "thêm mới item_id khác với hôm qua", chiến lược merge thông minh hơn thế rất nhiều dựa trên unique_key = 'item_id':Trường hợp 1: Nếu item_id hoàn toàn mới (Chưa có trong bảng Silver)$\rightarrow$ Hệ thống sẽ thực hiện hành động INSERT (chèn) dòng dữ liệu mới tinh đó vào bảng.Trường hợp 2: Nếu item_id ĐÃ TỒN TẠI trong bảng Silver (vì sản phẩm này hôm qua đã cào rồi, và hôm nay script Python cào lại)$\rightarrow$ Hệ thống sẽ không chèn trùng lặp, mà thực hiện hành động UPDATE (cập nhật) lại các thông tin mới nhất của sản phẩm đó (Ví dụ: Hôm qua giá là 10$, hôm nay người bán hạ giá còn 8$, hoặc số lượng bid đã tăng lên...). Các cột thay đổi sẽ được cập nhật đè lên giá trị cũ của đúng item_id đó.
-
-========================================
-cách code cào dữ liệu hoạt động
-
-Dựa vào cấu trúc code trong file `ebay_ingest.py` của bạn, câu trả lời ngắn gọn là: **Ở tầng Ingestion (S3) bạn dùng dạng Append (Incremental theo file/partition), nhưng khi đưa vào Snowflake (từ tầng Silver trở đi) bạn NÊN dùng Incremental Load thay vì Full Load.**
-
-Cụ thể cách vận hành cho từng tầng đối với dữ liệu cào này như sau:
+> Pipeline Data Engineering thu thập dữ liệu listing từ **eBay US API**, điều phối bằng **Airflow**, lưu trữ và biến đổi trên **Snowflake + dbt** theo **Medallion Architecture (Bronze → Silver → Gold)**, phục vụ dashboard **Power BI**.
 
 ---
 
-### 1. Ở tầng S3 (Code Python hiện tại của bạn)
+## Mục lục
 
-* **Bản chất code:** Mỗi lần script Python chạy, nó sẽ cào danh sách sản phẩm hiện tại từ eBay API và sinh ra một file `.parquet` mới độc lập, lưu vào đúng thư mục phân vùng ngày hôm đó:
-`s3://.../year=YYYY/month=MM/day=DD/ebay_items_HHMMSS.parquet`
-* **Đây là cơ chế gì?** Đây chính là dạng **Append-only (Incremental theo lô/file)**. Bạn không ghi đè hay xóa file cũ trên S3 mà cứ mỗi ngày lại bỏ thêm các file mới vào kho lưu trữ (Bronze Layer).
-
----
-
-### 2. Ở tầng Snowflake (Đưa vào dbt)
-
-Khi bạn dùng dbt để biến đổi dữ liệu từ S3 vào Snowflake, chiến lược xử lý được chia rõ ràng:
-
-* **Tầng Bronze (Bảng thô trỏ vào S3):**
-* Thường được cấu hình dưới dạng **External Table** trỏ thẳng vào các thư mục phân vùng trên S3. Khi S3 có thêm file của ngày mới, External Table tự động nhìn thấy mà không cần nạp lại từ đầu.
-
-
-* **Tầng Silver (`ebay_data_cleaned.sql` - Làm sạch):**
-* **TUYỆT ĐỐI KHÔNG DÙNG FULL LOAD** khi dữ liệu lớn dần.
-* **Giải pháp:** Bạn phải chuyển model dbt này sang dạng **Incremental** với chiến lược **`merge` (Upsert)** dựa trên khóa chính là `item_id`.
-* **Lý do:** Vì script Python của bạn mỗi ngày cào lại các sản phẩm đang active (dẫn đến hôm nay có thể cào lại những sản phẩm trùng với hôm qua), việc dùng dbt Incremental (Merge) sẽ giúp hệ thống tự động:
-* Nếu `item_id` đã tồn tại và giá/trạng thái thay đổi $\rightarrow$ **Cập nhật (Update)** thông tin mới.
-* Nếu `item_id` là sản phẩm mới xuất hiện $\rightarrow$ **Chèn thêm (Insert)**.
-* Giúp giữ nguyên lịch sử, chạy nhanh trong vài giây và tiết kiệm chi phí tính toán tuyệt đối trên Snowflake!
-
-
-========================================
-Trong thiết kế Kho dữ liệu (Data Warehouse) và Data Marts (tầng Gold), việc xây dựng **Dimension Table (Bảng chiều - Dim)** và **Fact Table (Bảng sự kiện - Fact)** tuân theo **Mô hình chiều (Dimensional Modeling)** của Ralph Kimball.
-
-Dưới đây là các quy tắc chuẩn mực và câu trả lời cho việc có bắt buộc phải tuân thủ chúng hay không:
+1. [Bài toán kinh doanh](#1-bài-toán-kinh-doanh)
+2. [Kiến trúc tổng quan](#2-kiến-trúc-tổng-quan)
+3. [Luồng xử lý trong DAG](#3-luồng-xử-lý-trong-dag)
+4. [Mô hình dữ liệu (Gold)](#4-mô-hình-dữ-liệu-gold)
+5. [Kiểm tra chất lượng dữ liệu](#5-kiểm-tra-chất-lượng-dữ-liệu)
+6. [Công nghệ sử dụng](#6-công-nghệ-sử-dụng)
+7. [Cấu trúc repository](#7-cấu-trúc-repository)
+8. [Cài đặt và chạy](#8-cài-đặt-và-chạy)
+9. [Trạng thái xác minh](#9-trạng-thái-xác-minh)
+10. [Giới hạn](#10-giới-hạn)
+11. [Roadmap](#11-roadmap)
 
 ---
 
-### I. Các quy tắc khi tạo Dimension Table (Bảng Dim)
+## 1. Bài toán kinh doanh
 
-Bảng Dim trả lời cho câu hỏi: *Ai, cái gì, ở đâu, khi nào, loại gì?* (Chứa thông tin ngữ cảnh và mô tả).
+**Bối cảnh:** Doanh nghiệp muốn mở rộng bán hàng trên **eBay US** và cần chọn nên tập trung vào danh mục nào, định giá ra sao.
 
-1. **Phải có Khóa chính (Surrogate Key / Primary Key):**
-* Mỗi bảng Dim nên có một khóa chính độc lập (thường dùng dạng chuỗi số nguyên tự tăng hoặc dùng hàm `HASH()` như cách bạn đang làm với `HASH(item_id)` hoặc `HASH(seller_username)`). Tránh phụ thuộc hoàn toàn vào mã nguồn cũ vì mã nguồn có thể bị thay đổi từ hệ thống gốc.
+**Câu hỏi chính:**
 
+> *"Trên eBay US, danh mục nào có mức cạnh tranh vừa phải và mặt bằng giá hấp dẫn, và nên định giá, giảm giá ở mức nào để cạnh tranh được?"*
 
-2. **Chứa các thuộc tính mô tả (Descriptive Attributes):**
-* Các cột trong Dim chủ yếu là kiểu chữ (`STRING`) mang tính chất phân loại, lọc dữ liệu hoặc hiển thị (ví dụ: tên danh mục, tên người bán, quốc gia, trạng thái sản phẩm). **Tuyệt đối không chứa các con số để cộng trừ nhân chia (measures).**
+**Hướng phân tích** (dữ liệu listing từ API):
 
+| Nhóm | Câu hỏi | Góc nhìn |
+|---|---|---|
+| Giá & khuyến mãi | Mặt bằng giá mỗi danh mục? Bao nhiêu listing có giảm giá? | Median, P25, P75; tỷ lệ listing có discount |
+| Vận chuyển | Free shipping có làm giá niêm yết cao hơn không? | Giá, phí ship, giá + phí ship |
+| Tình trạng | New / Used / Refurbished khác nhau thế nào về giá? | Giá theo condition và category |
+| Người bán | Danh mục nào có nhiều seller uy tín, mức tập trung ra sao? | Feedback score, feedback %, số listing/seller |
 
-3. **Cấu trúc phẳng (Denormalized):**
-* Khác với thiết kế cơ sở dữ liệu OLTP chuẩn hóa cao (3rd Normal Form), bảng Dim trong Data Warehouse thường chấp nhận lặp lại dữ liệu (flat table) để giảm thiểu việc phải `JOIN` nhiều bảng với nhau khi người dùng truy vấn.
-
-
-4. **Quản lý thay đổi (Slow Changing Dimensions - SCD):**
-* Cần có chiến lược xử lý khi thông tin trong Dim thay đổi theo thời gian (ví dụ: người bán đổi tên, sản phẩm đổi danh mục) để lịch sử dữ liệu không bị sai lệch.
-
-
+> **Lưu ý diễn giải:** dữ liệu là listing đang niêm yết, không phải giao dịch đã bán. Không thể suy ra doanh thu hay số lượng bán từ dữ liệu này.
 
 ---
 
-### II. Các quy tắc khi tạo Fact Table (Bảng Fact)
+## 2. Kiến trúc tổng quan
 
-Bảng Fact trả lời cho câu hỏi: *Bao nhiêu?* (Chứa các số liệu đo lường, giao dịch hoặc sự kiện).
+Dự án kết hợp **Medallion Architecture** với quy trình **ELT** (Extract → Load → Transform): dữ liệu thô được nạp vào warehouse trước, sau đó mới biến đổi bằng SQL/dbt.
 
-1. **Xác định rõ Hạt giống (Grain - Mức độ chi tiết):**
-* Đây là **quy tắc quan trọng nhất**. Bạn phải định nghĩa rõ: *1 dòng trong bảng Fact đại diện cho cái gì?*
-* *Ví dụ:* Trong file `fact_listing.sql` của bạn, grain được định nghĩa rất chuẩn: *"One ITEM_ID per snapshot date"* (1 dòng tương ứng với 1 sản phẩm tại 1 ngày chụp dữ liệu).
+```mermaid
+flowchart LR
+    subgraph S1["① Phát triển & triển khai"]
+        direction TB
+        DEV["Developer"] --> GH["GitHub"]
+        GH --> CI["CI/CD<br/>kiểm tra lỗi và deploy code"]
+    end
 
+    subgraph S2["② Hạ tầng chạy 24/7 · AWS EC2"]
+        direction TB
+        DK["Docker containers<br/>Python · Airflow · dbt"] --> AF["Apache Airflow<br/>lên lịch · chạy DAG · retry"]
+    end
 
-2. **Chứa các Khóa ngoại (Foreign Keys):**
-* Bảng Fact phải chứa các khóa ngoại (như `listing_key`, `seller_key`, `date_key`, `category_key`...) để liên kết ngược lại với các bảng Dim tương ứng.
+    subgraph S3["③ Data pipeline · Medallion"]
+        direction LR
+        API["eBay API"] --> S3B[("Amazon S3<br/>Landing zone<br/>file thô")]
+        S3B -- "COPY INTO" --> BR[("Snowflake<br/>BRONZE<br/>dữ liệu thô")]
+        BR --> SV[("Snowflake<br/>SILVER<br/>làm sạch · kiểm tra chất lượng<br/>bóc tách JSON")]
+        SV --> GD[("Snowflake<br/>GOLD<br/>fact_listing + dimensions")]
+    end
 
+    PBI["④ Power BI<br/>Dashboard"]
 
-3. **Chứa các Chỉ số đo lường (Measures / Metrics):**
-* Các cột dữ liệu phải là các con số phục vụ cho việc tính toán thống kê (ví dụ: `price_value`, `bid_count`, `discount_percentage`, `shipping_cost`). Các con số này thường có tính chất có thể cộng dồn (additive) hoặc bán cộng dồn (semi-additive).
+    CI -- "deploy code" --> DK
+    AF -. "điều phối các task" .-> S3
+    GD --> PBI
 
+    classDef bronze fill:#f4e1c6,stroke:#b8742a,color:#000
+    classDef silver fill:#e3e6ea,stroke:#6b7480,color:#000
+    classDef gold fill:#fbefb5,stroke:#c9a400,color:#000
+    class BR bronze
+    class SV silver
+    class GD gold
+```
 
-4. **Kích thước bảng rất lớn (High Volume):**
-* Bảng Fact thường có số lượng dòng cực lớn và tăng trưởng theo từng ngày (time-series). Do đó, nó cần được tối ưu phân vùng (partition) hoặc đánh chỉ mục (clustering) để truy vấn không bị chậm.
+**Cách đọc sơ đồ:**
 
+| Khối | Vai trò |
+|---|---|
+| ① Phát triển & triển khai | Dev đẩy code lên GitHub; CI/CD kiểm tra và đưa code mới lên máy chủ EC2. |
+| ② Hạ tầng 24/7 | EC2 luôn chạy; Docker đóng gói môi trường; Airflow bên trong Docker là "nhạc trưởng" kích hoạt pipeline theo lịch. |
+| ③ Data pipeline | Dữ liệu đi một chiều: API → S3 → Bronze → Silver → Gold. |
+| ④ Power BI | Kết nối tầng Gold để dựng dashboard. |
 
-=================================================
+**Vai trò từng tầng Medallion:**
 
-Để hiểu rõ sự khác biệt kinh điển này, chúng ta hãy đặt hai mô hình OLTP (Hệ thống chạy App/Web - chuẩn hóa cao) và Data Warehouse (Kho dữ liệu báo cáo - làm phẳng bảng) lên cùng một bàn cân với một ví dụ thực tế từ chính cấu trúc bảng dim_category (Danh mục sản phẩm) trong dự án eBay của bạn.
+| Tầng | Nội dung | Thành phần |
+|---|---|---|
+| **Bronze** | Dữ liệu thô nạp từ S3 bằng `COPY INTO`, chưa chỉnh sửa, dùng để truy vết và xử lý lại | Schema Bronze trên Snowflake |
+| **Silver** | Chuẩn hóa kiểu dữ liệu, làm sạch, kiểm tra chất lượng, bóc tách JSON lồng nhau | Schema `SILVER` (dbt: staging, data_quality, intermediate) |
+| **Gold** | Mô hình hình sao (Star Schema): 1 bảng fact + các bảng dimension | Schema `GOLD` (dbt: marts) |
 
-1. Cách thiết kế của OLTP (Chuẩn hóa cao - 3rd Normal Form)
+---
 
-Trong các hệ thống như MySQL, PostgreSQL chạy ứng dụng Web, mục tiêu tối cao là không được phí phạm dung lượng ổ đĩa và tuyệt đối không để dữ liệu bị lặp lại (để khi sửa đổi tên danh mục thì chỉ cần sửa đúng 1 chỗ).
-Hệ thống OLTP sẽ chia thông tin danh mục thành các bảng nhỏ rời rạc và nối với nhau bằng các ID:
-• Bảng Category_L1 (Cấp 1):
-l1_id	l1_name
-C_01	Baby
+## 3. Luồng xử lý trong DAG
 
-• Bảng Category_L2 (Cấp 2 - trung gian): Trỏ khóa ngoại về L1
-l2_id	l2_name	l1_id
-C_02_A	Baby Clothing	C_01
+Airflow kích hoạt các task theo thứ tự phụ thuộc dưới đây (số task giữ theo thiết kế của dự án).
 
-• Bảng Category_Leaf (Cấp thấp nhất): Trỏ khóa ngoại về L2
-leaf_id	leaf_name	l2_id
-C_Leaf_99	Baby Shoes	C_02_A
+```mermaid
+flowchart TD
+    T4["Task 4<br/>Gọi eBay API, lưu file thô vào S3"] --> T5["Task 5<br/>COPY INTO: nạp S3 vào Snowflake BRONZE"]
+    T5 --> T6["Task 6<br/>Đọc dữ liệu thô từ BRONZE"]
+    T6 --> T7["Task 7<br/>Làm sạch và kiểm tra chất lượng"]
+    T6 --> T8["Task 8<br/>Bóc tách JSON lồng nhau"]
+    T7 --> T9["Task 9<br/>Tạo bảng Fact / Dim, lưu vào GOLD"]
+    T8 --> T9
+    T9 --> T11["Task 11<br/>Power BI refresh"]
 
+    classDef ingest fill:#dbeafe,stroke:#2563eb,color:#000
+    classDef bronze fill:#f4e1c6,stroke:#b8742a,color:#000
+    classDef silver fill:#e3e6ea,stroke:#6b7480,color:#000
+    classDef gold fill:#fbefb5,stroke:#c9a400,color:#000
+    classDef bi fill:#dcfce7,stroke:#16a34a,color:#000
+    class T4 ingest
+    class T5,T6 bronze
+    class T7,T8 silver
+    class T9 gold
+    class T11 bi
+```
 
-⚠️ Vấn đề khi làm báo cáo với OLTP:
+| Task | Việc làm | Tầng |
+|---|---|---|
+| 4 | Script Python gọi eBay API, ghi dữ liệu thô vào S3 (landing zone) | Ingestion |
+| 5 | Snowflake `COPY INTO` nạp file từ S3 vào bảng Bronze | Bronze |
+| 6 | Đọc dữ liệu từ Bronze để chuẩn bị biến đổi | Bronze → Silver |
+| 7 | Làm sạch, chuẩn hóa kiểu dữ liệu, chạy kiểm tra chất lượng | Silver |
+| 8 | Mở rộng (flatten) các trường JSON lồng nhau thành cột dạng bảng | Silver |
+| 9 | Tạo các bảng fact và dimension theo Star Schema | Gold |
+| 11 | Power BI làm mới dữ liệu từ Gold | BI |
 
-Nếu sếp muốn chạy một câu lệnh xem tổng doanh thu của toàn bộ nhóm ngành Baby (L1), Snowflake hoặc hệ thống tính toán của bạn sẽ phải thực hiện một chuỗi phép JOIN cực kỳ kinh hoàng:
-Bảng Fact ➔ JOIN với Category_Leaf ➔ JOIN tiếp với Category_L2 ➔ JOIN tiếp với Category_L1 rồi mới WHERE l1_name = 'Baby'.
-Việc phải thực hiện 3-4 phép JOIN bắc cầu trên hàng triệu dòng dữ liệu chỉ để lấy cái tên danh mục sẽ làm hệ thống báo cáo bị nghẽn mạch và chạy siêu chậm.
+**Ánh xạ sang model dbt** (đã chạy thành công, xem log ở [mục 5](#5-kiểm-tra-chất-lượng-dữ-liệu)):
 
-2. Cách thiết kế của Data Warehouse (Chấp nhận lặp dữ liệu - Flat Table)
+| Task | Model dbt | Schema | Materialization |
+|---|---|---|---|
+| 6 | `stg_ebay_raw` | `SILVER` | view |
+| 7 | `ebay_data_cleaned`, `dq_check` | `SILVER` | incremental |
+| 8 | `ebay_data_json_expanded` | `SILVER` | table |
+| 9 | `fact_listing`, `dim_category`, `dim_condition`, `dim_seller`, `dim_date` | `GOLD` | table |
 
-Trong Kho dữ liệu (Data Warehouse), dung lượng ổ đĩa ngày nay rất rẻ, cái đắt đỏ nhất là tài nguyên tính toán (CPU/RAM) mỗi lần xử lý phép JOIN. Do đó, người ta áp dụng quy tắc "Làm phẳng bảng" (Denormalization).
-Tất cả các cấp danh mục từ cha đến con sẽ được gộp chung vào ĐÚNG 1 BẢNG DUY NHẤT là dim_category giống hệt như bản mô tả thiết kế của bạn:
-Bảng dim_category (Flat Table hoàn toàn):
+> Thứ tự task chính xác được định nghĩa trong `dags/dag_ebay_ingest_pipeline.py`, đó là nguồn tham chiếu cuối cùng nếu có khác biệt với sơ đồ trên.
 
-category_key	category_leaf_id	category_leaf_name	category_l2_name	category_l1_id	category_l1_name
-1	C_Leaf_99	Baby Shoes	Baby Clothing	C_01	Baby
-2	C_Leaf_100	Baby Socks	Baby Clothing	C_01	Baby
+---
 
-=================================================
-neus dữ liệu trong snowflake đã có các dim và fact table rồi thì làm khi chạy các dbt như này có làm lỗi dữ liệu ở gold schema snowflake ko
+## 4. Mô hình dữ liệu (Gold)
+
+Mô hình hình sao gồm 1 bảng fact và 4 bảng dimension:
+
+```mermaid
+erDiagram
+    DIM_CATEGORY  ||--o{ FACT_LISTING : "category_key"
+    DIM_CONDITION ||--o{ FACT_LISTING : "condition_key"
+    DIM_SELLER    ||--o{ FACT_LISTING : "seller_key"
+```
+
+| Model | Khóa đã được kiểm tra | Vai trò |
+|---|---|---|
+| `fact_listing` | `listing_key` (not_null, unique); `category_key`, `seller_key`, `condition_key` (relationships tới dimension) | Bảng dữ kiện, mỗi dòng là một listing theo grain định nghĩa trong SQL |
+| `dim_category` | `category_key` (not_null, unique) | So sánh giá và listing theo danh mục |
+| `dim_condition` | `condition_key` (not_null, unique) | So sánh theo tình trạng sản phẩm |
+| `dim_seller` | `seller_key` (not_null, unique) | Phân tích theo người bán |
+| `dim_date` | Chưa có test trong log | Phân tích theo thời gian |
+
+> Sơ đồ chỉ vẽ các quan hệ đã có test `relationships` trong log `dbt build`. `dim_date` có trong mô hình nhưng chưa có test khóa hay quan hệ với fact, nên không vẽ vào sơ đồ.
+
+---
+
+## 5. Kiểm tra chất lượng dữ liệu
+
+Kết quả chạy trên target `dev` (log `dbt build` của dự án).
+
+### 5.1. Tầng Silver: `dbt build --select +dq_check`
+
+**13 mục: 10 thành công, 3 cảnh báo (warn), 0 lỗi.**
+
+| Kết quả | Test | Ý nghĩa |
+|---|---|---|
+| ✅ Passed | `not_null` · `item_id` | Mọi listing đều có ID |
+| ✅ Passed | `unique` · `item_id` | Không trùng ID |
+| ✅ Passed | `not_null` · `legacy_item_id` | Có legacy ID |
+| ✅ Passed | `not_null` · `price_value` | Giá không bị thiếu |
+| ✅ Passed | `expression_is_true` · `price_value` | Điều kiện so với 0 (xem `schema.yml`) |
+| ✅ Passed | `expression_is_true` · `current_bid_price_value` | Điều kiện so với 0 (xem `schema.yml`) |
+| ✅ Passed | `expression_is_true` · `bid_count` | Điều kiện so với 0 (xem `schema.yml`) |
+| ✅ Passed | `expression_is_true` · `seller_feedback_percentage` | Nằm trong khoảng 0 – 100 |
+| ⚠️ Warn | `expression_is_true` · `marketing_price_discount_percentage` | Kỳ vọng nằm trong khoảng 0 – 100 |
+| ⚠️ Warn | `accepted_values` · `adult_only` | Kỳ vọng thuộc `True`, `TRUE`, `FALSE` |
+| ⚠️ Warn | `expression_is_true` · `seller_feedback_score` | Điều kiện so với 0 (xem `schema.yml`) |
+
+Cả 3 cảnh báo nằm trong `models/staging/schema.yml` (dòng 54, 90, 72). Cảnh báo không làm dừng pipeline nhưng cần điều tra dữ liệu nguồn trước khi dùng các cột này để ra kết luận.
+
+Các model Silver còn lại đã chạy thành công:
+
+| Lệnh | Model | Kết quả |
+|---|---|---|
+| `dbt run --select ebay_data_cleaned` | `SILVER.ebay_data_cleaned` (incremental) | ✅ 1/1 |
+| `dbt run --select ebay_data_json_expanded` | `SILVER.ebay_data_json_expanded` (table) | ✅ 1/1 |
+
+### 5.2. Tầng Gold: `dbt build --select marts`
+
+**16 mục: 16 thành công** (5 model + 11 test).
+
+| Nhóm test | Kết quả |
+|---|---|
+| `not_null` + `unique` trên `category_key`, `condition_key`, `seller_key`, `listing_key` | ✅ Passed |
+| `relationships` `fact_listing` → `dim_category`, `dim_seller`, `dim_condition` | ✅ Passed |
+
+### 5.3. Nguyên tắc dữ liệu
+
+- Không tự động thay `NULL` bằng 0: thiếu dữ liệu khác với giá trị bằng 0.
+- Chỉ so sánh giá giữa các listing sau khi xác nhận cùng đơn vị tiền tệ.
+- Khi bóc tách JSON lồng nhau phải đảm bảo không nhân bản listing (đã có test `unique` trên `item_id` ở staging và `listing_key` ở fact).
+
+---
+
+## 6. Công nghệ sử dụng
+
+| Hạng mục | Công cụ |
+|---|---|
+| Nguồn dữ liệu | eBay API |
+| Ngôn ngữ | Python, SQL |
+| Điều phối | Apache Airflow (Astronomer) |
+| Container | Docker, Docker Compose |
+| Hạ tầng | AWS EC2 (chạy 24/7) |
+| Data lake / landing zone | Amazon S3 |
+| Data warehouse | Snowflake (Bronze / Silver / Gold) |
+| Biến đổi dữ liệu | dbt (kèm `dbt_utils`) |
+| Kiến trúc | Medallion Architecture, ELT, Star Schema |
+| BI | Power BI |
+| Quản lý mã nguồn & CI/CD | Git, GitHub (thư mục `.github`) |
+
+---
+
+## 7. Cấu trúc repository
+
+```text
+ddd/
+├── .astro/                         # Cấu hình Astronomer
+├── .github/                        # Workflow CI/CD
+├── dags/
+│   └── dag_ebay_ingest_pipeline.py # Định nghĩa DAG
+├── include/
+│   └── ebay_ingest.py              # Script Python cào dữ liệu từ Ebay API
+├── jaffle_shop/                    # dbt project
+│   ├── models/
+│   │   ├── staging/                # stg_ebay_raw, ebay_data_cleaned, schema.yml
+│   │   ├── data_quality/           # dq_check
+│   │   ├── intermediate/           # ebay_data_json_expanded
+│   │   └── marts/                  # fact_listing, dim_*, marts.yml
+│   ├── seeds/
+│   ├── dbt_project.yml
+│   ├── packages.yml
+│   └── profiles.yml
+├── plugins/
+├── tests
+├── .env                            
+├── airflow_settings.yaml
+├── docker-compose.yml
+├── Dockerfile
+├── packages.txt
+├── requirements.txt
+└── README.md
+```
+
+| Thư mục | Vai trò |
+|---|---|
+| `dags/` | DAG và quan hệ phụ thuộc giữa các task |
+| `include/` | Mã Python cho bước ingestion |
+| `jaffle_shop/` | Toàn bộ dbt project (tên `jaffle_shop` là tên mặc định của dbt) |
+| `models/staging/` | Chuẩn hóa dữ liệu thô và schema tests |
+| `models/data_quality/` | `dq_check`, kiểm tra chất lượng |
+| `models/intermediate/` | Bóc tách JSON lồng nhau |
+| `models/marts/` | Fact và dimension cho BI |
+| `macros/generate_schema_name.sql` | Quyết định tên schema thực tế (`SILVER`, `GOLD`) |
+
+> Không commit `.env`, `target/`, `logs/`, `dbt_packages/`, `__pycache__/`. Hãy kiểm tra các mục này đã nằm trong `.gitignore`.
+
+---
+
+## 8. Cài đặt và chạy
+
+### Yêu cầu
+
+- Git, Docker Desktop (hoặc Docker Compose), Astro CLI
+- Tài khoản eBay Developer (để gọi API)
+- Tài khoản Snowflake
+- (Triển khai cloud) AWS: EC2, S3
+
+### 8.1. Clone
+
+```bash
+git clone <REPOSITORY_URL>
+cd ddd
+```
+
+### 8.2. Cấu hình môi trường
+
+Tạo file `.env` ở thư mục gốc với các biến mà `docker-compose.yml`, DAG và `include/ebay_ingest.py` đọc (eBay API, Snowflake, AWS). Đối chiếu tên biến trong mã nguồn; **không commit** token hay mật khẩu.
+
+Cấu hình kết nối Snowflake cho dbt trong `jaffle_shop/profiles.yml` (target `dev`).
+
+### 8.3. Khởi động Airflow
+
+```bash
+astro dev start
+```
+
+Mở Airflow UI tại URL terminal thông báo (thường là `http://localhost:8080`), bật DAG `dag_ebay_ingest_pipeline`.
+
+### 8.4. Chạy dbt
+
+```bash
+cd jaffle_shop
+dbt deps
+
+# Silver: staging + kiểm tra chất lượng
+dbt build --select +dq_check
+dbt run   --select ebay_data_cleaned
+dbt run   --select ebay_data_json_expanded
+
+# Gold: fact + dimension + tests
+dbt build --select marts
+```
+
+---
+
+## 9. Trạng thái xác minh
+
+Phân biệt phần đã có bằng chứng chạy thực tế với phần mô tả kiến trúc:
+
+| Thành phần | Trạng thái | Bằng chứng |
+|---|---|---|
+| dbt Silver (staging, dq_check, cleaned, json_expanded) | ✅ Đã chạy | Log `dbt build` / `dbt run` trên target `dev` |
+| dbt Gold (fact + 4 dim) và tests | ✅ Đã chạy | Log `dbt build --select marts`: 16/16 thành công |
+| DAG Airflow, script ingestion | 📁 Có trong repo | `dags/dag_ebay_ingest_pipeline.py`, `include/ebay_ingest.py` |
+| Docker / Astronomer | 📁 Có trong repo | `Dockerfile`, `docker-compose.yml`, `.astro/` |
+| CI/CD | 📁 Có thư mục | `.github/` (nội dung workflow cần đối chiếu) |
+| EC2, S3, `COPY INTO` Bronze, Power BI refresh | 📝 Theo thiết kế kiến trúc | Cần bổ sung log/ảnh chụp cấu hình khi hoàn thiện tài liệu |
+
+---
