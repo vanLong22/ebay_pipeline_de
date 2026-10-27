@@ -6,7 +6,7 @@ version: 2
 sources:
   - name: raw_ebay_bronze
     description: "Dữ liệu thô từ tầng Bronze trên S3"
-    database: EBAY_PROJECT_DB   
+    database: EBAY_DB   
     schema: BRONZE              
     tables:
       - name: raw_ebay_listings # tên bảng dữ liệu thô trong schema bronze của snowflake 
