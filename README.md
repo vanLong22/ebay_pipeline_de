@@ -15,8 +15,7 @@
 7. [Cấu trúc repository](#7-cấu-trúc-repository)
 8. [Cài đặt và chạy](#8-cài-đặt-và-chạy)
 9. [Trạng thái xác minh](#9-trạng-thái-xác-minh)
-10. [Giới hạn](#10-giới-hạn)
-11. [Roadmap](#11-roadmap)
+
 
 ---
 
