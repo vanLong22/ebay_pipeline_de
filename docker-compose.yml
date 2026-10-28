@@ -70,6 +70,7 @@ services:
     volumes:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
+      - ./include:/opt/airflow/include
       - ./plugins:/opt/airflow/plugins
       - ./jaffle_shop:/opt/airflow/jaffle_shop
     command: scheduler
