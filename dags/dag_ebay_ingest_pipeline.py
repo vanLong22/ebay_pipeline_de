@@ -15,6 +15,7 @@ DBT_PROFILES_DIR = DBT_PROJECT_DIR
 sys.path.append(os.path.abspath(os.path.join(DAG_DIR, '../include')))
 from include.ebay_ingest import scrape_all_ebay_categories, upload_parquet_partitioned_to_s3
 
+ 
 default_args = {
     'owner': 'ebay_data_engineer',
     'depends_on_past': False,
