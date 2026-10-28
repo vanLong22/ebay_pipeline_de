@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:15-alpine
@@ -14,13 +12,19 @@ services:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - data-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
-  # Thêm service khởi tạo database và tài khoản admin tự động
+  # Khởi tạo database và tài khoản admin tự động
   airflow-init:
     build: .
     container_name: airflow_init
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     environment:
       - AIRFLOW__CORE__EXECUTOR=LocalExecutor
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres:5432/airflow_db
@@ -33,17 +37,24 @@ services:
     networks:
       - data-network
 
+  # Giao diện Webserver điều khiển chính
   airflow-webserver:
     build: .
     container_name: airflow_webserver
     restart: always
     depends_on:
-      - postgres
-      - airflow-init
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
     environment:
       - AIRFLOW__CORE__EXECUTOR=LocalExecutor
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres:5432/airflow_db
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      # Giảm tải số workers xuống 2 để chống tràn RAM máy ảo EC2 yếu
+      - AIRFLOW__WEBSERVER__WORKERS=2
+      # Tăng thời gian timeout lên 300 giây để gunicorn master không bị sập sớm
+      - AIRFLOW__WEBSERVER__WEB_SERVER_MASTER_TIMEOUT=300
     volumes:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
@@ -55,14 +66,16 @@ services:
     networks:
       - data-network
 
-  # Thêm service Scheduler để chạy các DAG định kỳ
+  # Bộ lập lịch Scheduler để quét và chạy các DAG định kỳ
   airflow-scheduler:
     build: .
     container_name: airflow_scheduler
     restart: always
     depends_on:
-      - postgres
-      - airflow-init
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
     environment:
       - AIRFLOW__CORE__EXECUTOR=LocalExecutor
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres:5432/airflow_db
