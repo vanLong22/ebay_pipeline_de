@@ -4,7 +4,8 @@ from airflow.operators.python import PythonOperator
 from airflow.operators.bash import BashOperator
 from airflow.providers.snowflake.operators.snowflake import SnowflakeOperator
 import sys
-import os 
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Thiết lập đường dẫn
 DAG_DIR = os.path.dirname(os.path.abspath(__file__))

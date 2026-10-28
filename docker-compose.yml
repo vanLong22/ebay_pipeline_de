@@ -57,6 +57,7 @@ services:
       - AIRFLOW__WEBSERVER__WEB_SERVER_MASTER_TIMEOUT=300
     volumes:
       - ./dags:/opt/airflow/dags
+      - ./include:/opt/airflow/include 
       - ./logs:/opt/airflow/logs
       - ./plugins:/opt/airflow/plugins
       - ./jaffle_shop:/opt/airflow/jaffle_shop  # Mount thư mục dbt
@@ -82,8 +83,8 @@ services:
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
     volumes:
       - ./dags:/opt/airflow/dags
+      - ./include:/opt/airflow/include 
       - ./logs:/opt/airflow/logs
-      - ./include:/opt/airflow/include
       - ./plugins:/opt/airflow/plugins
       - ./jaffle_shop:/opt/airflow/jaffle_shop
     command: scheduler
