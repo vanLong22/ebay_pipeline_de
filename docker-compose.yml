@@ -1,3 +1,9 @@
+x-airflow-common-env: &airflow-common-env
+  AIRFLOW__CORE__EXECUTOR: LocalExecutor
+  AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow_db
+  AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+  AIRFLOW__WEBSERVER__SECRET_KEY: "9a8b7c6d5e4f3g2h1i0j9k8l7m6n5o5p"
+
 services:
   postgres:
     image: postgres:15-alpine
@@ -7,7 +13,7 @@ services:
       POSTGRES_PASSWORD: airflow
       POSTGRES_DB: airflow_db
     ports:
-      - "5432:5432"
+      - "5435:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -18,26 +24,25 @@ services:
       timeout: 5s
       retries: 5
 
-  # Khởi tạo database và tài khoản admin tự động
-  airflow-init:
-    build: .
-    container_name: airflow_init
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres:5432/airflow_db
-      - AIRFLOW__CORE__LOAD_EXAMPLES=False
-    command: >
-      bash -c "
-      airflow db migrate &&
-      airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@example.com --password admin
-      "
-    networks:
-      - data-network
+  # # Khởi tạo database và tài khoản admin tự động
+  # airflow-init:
+  #   build: .
+  #   container_name: airflow_init
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   environment:
+  #     - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+  #     - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres:5432/airflow_db
+  #     - AIRFLOW__CORE__LOAD_EXAMPLES=False
+  #   command: >
+  #     bash -c "
+  #     airflow db migrate &&
+  #     airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@example.com --password admin
+  #     "
+  #   networks:
+  #     - data-network
 
-  # Giao diện Webserver điều khiển chính
   airflow-webserver:
     build: .
     container_name: airflow_webserver
@@ -45,29 +50,27 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      airflow-init:
-        condition: service_completed_successfully
+    env_file:              
+      - .env
     environment:
-      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres:5432/airflow_db
-      - AIRFLOW__CORE__LOAD_EXAMPLES=False
-      # Giảm tải số workers xuống 2 để chống tràn RAM máy ảo EC2 yếu
-      - AIRFLOW__WEBSERVER__WORKERS=2
-      # Tăng thời gian timeout lên 300 giây để gunicorn master không bị sập sớm
-      - AIRFLOW__WEBSERVER__WEB_SERVER_MASTER_TIMEOUT=300
+      <<: *airflow-common-env
+      AIRFLOW__WEBSERVER__WORKERS: 2
+      AIRFLOW__WEBSERVER__WEB_SERVER_MASTER_TIMEOUT: 300
+      TZ: Asia/Ho_Chi_Minh
+      AIRFLOW_CONN_SNOWFLAKE_DEFAULT: "snowflake://LONG22:%2318072004LvLvL@OXWUVAS-PY18788/?account=OXWUVAS-PY18788&warehouse=COMPUTE_WH&database=EBAY_DB&schema=BRONZE&role=ACCOUNTADMIN"
     volumes:
       - ./dags:/opt/airflow/dags
       - ./include:/opt/airflow/include 
       - ./logs:/opt/airflow/logs
       - ./plugins:/opt/airflow/plugins
-      - ./jaffle_shop:/opt/airflow/jaffle_shop  # Mount thư mục dbt
+      - ./jaffle_shop:/opt/airflow/jaffle_shop
     ports:
-      - "8080:8080"
-    command: webserver
+      - "8085:8080"
+    # Tự động chạy migrate database trước rồi mới bật webserver lên
+    command: bash -c "airflow db migrate && airflow webserver"
     networks:
       - data-network
 
-  # Bộ lập lịch Scheduler để quét và chạy các DAG định kỳ
   airflow-scheduler:
     build: .
     container_name: airflow_scheduler
@@ -75,19 +78,21 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      airflow-init:
-        condition: service_completed_successfully
+    env_file:              
+      - .env
     environment:
-      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres:5432/airflow_db
-      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      <<: *airflow-common-env
+      AIRFLOW__SCHEDULER__PARSING_PROCESSES: 1
+      AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: 60
+      TZ: Asia/Ho_Chi_Minh
+      AIRFLOW_CONN_SNOWFLAKE_DEFAULT: "snowflake://LONG22:%2318072004LvLvL@OXWUVAS-PY18788/?account=OXWUVAS-PY18788&warehouse=COMPUTE_WH&database=EBAY_DB&schema=BRONZE&role=ACCOUNTADMIN"
     volumes:
       - ./dags:/opt/airflow/dags
       - ./include:/opt/airflow/include 
       - ./logs:/opt/airflow/logs
       - ./plugins:/opt/airflow/plugins
       - ./jaffle_shop:/opt/airflow/jaffle_shop
-    command: scheduler
+    command: airflow scheduler
     networks:
       - data-network
 
@@ -97,4 +102,3 @@ volumes:
 networks:
   data-network:
     driver: bridge
-
