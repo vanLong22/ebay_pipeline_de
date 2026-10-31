@@ -39,27 +39,23 @@ models:
           - unique
           - not_null
       
-      # Cập nhật theo cú pháp chuẩn mới (đưa vào khối arguments:)
       - name: seller_key
         description: "Khóa ngoại trỏ tới dim_seller."
         tests:
           - relationships:
-              arguments:
-                to: ref('dim_seller')
-                field: seller_key
+              to: ref('dim_seller')
+              field: seller_key
 
       - name: condition_key
         description: "Khóa ngoại trỏ tới dim_condition."
         tests:
           - relationships:
-              arguments:
-                to: ref('dim_condition')
-                field: condition_key
+              to: ref('dim_condition')
+              field: condition_key
 
       - name: category_key
         description: "Khóa ngoại trỏ tới dim_category."
         tests:
           - relationships:
-              arguments:
-                to: ref('dim_category')
-                field: category_key
+              to: ref('dim_category')
+              field: category_key

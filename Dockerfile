@@ -1,50 +1,33 @@
-# ============================================================================
-# Bước 1: Chọn Image nền (Base Image) chứa sẵn hệ điều hành Linux và Apache Airflow
-# ============================================================================
-FROM apache/airflow:2.7.2-python3.10
+FROM quay.io/astronomer/astro-runtime:12.6.0
 
 USER root
-
-# Cài đặt các thư viện hệ thống cần thiết của Linux (nếu có)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# 1. Tối ưu hóa lệnh cập nhật hệ thống bảo mật để không bị lỗi 404
+RUN apt-get update --allow-releaseinfo-change && apt-get install -y --no-install-recommends \
     build-essential \
     git \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Switch về user airflow để đảm bảo tính an toàn bảo mật khi cài thư viện Python
-USER airflow
-
 # ============================================================================
-# Bước 2: Sao chép toàn bộ mã nguồn của dự án từ máy thật vào trong Docker Image
+# Cấu hình biến môi trường dbt dưới quyền hệ thống trước
 # ============================================================================
-# Tạo thư mục chứa dự án dbt bên trong môi trường Docker
-RUN mkdir -p ${AIRFLOW_HOME}/jaffle_shop
-
-# Copy code DAGs, các hàm cào dữ liệu (include) và dự án dbt vào container
-COPY --chown=airflow:root dags/ ${AIRFLOW_HOME}/dags/
-COPY --chown=airflow:root include/ ${AIRFLOW_HOME}/include/
-COPY --chown=airflow:root jaffle_shop/ ${AIRFLOW_HOME}/jaffle_shop/
-
-# ============================================================================
-# Bước 3: Định nghĩa các Biến môi trường (Environment Variables) cấu hình hệ thống
-# ============================================================================
-ENV DBT_PROJECT_DIR=${AIRFLOW_HOME}/jaffle_shop
-ENV DBT_PROFILES_DIR=${AIRFLOW_HOME}/jaffle_shop
-# Ngăn Python sinh ra các file rác .pyc làm phình container
+ENV DBT_PROJECT_DIR=/usr/local/airflow/jaffle_shop
+ENV DBT_PROFILES_DIR=/usr/local/airflow/jaffle_shop
 ENV PYTHONDONTWRITEBYTECODE=1 
 
-# ============================================================================
-# Bước 4: Cài đặt toàn bộ các thư viện Python (Dependencies) phục vụ pipeline
-# ============================================================================
-# Lưu ý: dbt-snowflake đã bao gồm sẵn thư viện kết nối dbt-core và thư viện snowflake
-RUN pip install --no-cache-dir --user \
-    apache-airflow-providers-snowflake \
-    boto3 \
-    pandas \
-    pyarrow \
-    requests \
-    dbt-snowflake
+# 2. Tạo thư mục jaffle_shop bằng quyền root để tránh lỗi phân quyền hệ thống
+RUN mkdir -p /usr/local/airflow/jaffle_shop && chown -R astro:0 /usr/local/airflow/jaffle_shop
 
-# (Tùy chọn) Kiểm tra xem dbt đã cài đặt thành công và nhận diện được chưa
-RUN dbt --version
+# 3. Chuyển sang user chuẩn của Astro Runtime (User mặc định là astro chứ không phải airflow)
+USER astro
+
+# Copy toàn bộ mã nguồn của bạn vào hệ thống với quyền sở hữu chính xác
+COPY --chown=astro:0 dags/ /usr/local/airflow/dags/
+COPY --chown=astro:0 include/ /usr/local/airflow/include/
+COPY --chown=astro:0 jaffle_shop/ /usr/local/airflow/jaffle_shop/
+
+# ============================================================================
+# TỰ ĐỘNG TẠO MÔI TRƯỜNG ẢO PYTHON VÀ CÀI ĐẶT DBT-SNOWFLAKE SIÊU TỐC
+# ============================================================================
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt

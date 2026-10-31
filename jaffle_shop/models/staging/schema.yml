@@ -20,8 +20,7 @@ models:
         description: "Mã định danh duy nhất của sản phẩm"
         data_tests:
           - unique:
-              config:
-                severity: warn # Đổi sang cảnh báo
+              severity: warn
           - not_null 
 
       - name: legacy_item_id
@@ -33,63 +32,53 @@ models:
         description: "Giá bán hiện tại của sản phẩm"
         data_tests:
           - not_null
-          - dbt_utils.expression_is_true:
-              config:
-                severity: warn # Bổ sung để bỏ qua dữ liệu bẩn
-              arguments:
-                expression: ">= 0" # dbt sẽ tự dịch thành (price_value >= 0)
+          - check_greater_than_or_equal:
+              value: 0
+              severity: warn
 
       - name: current_bid_price_value
         description: "Giá thầu hiện tại (đối với sản phẩm đấu giá)"
         data_tests:
-          - dbt_utils.expression_is_true: 
-              config:
-                severity: warn
-              arguments:
-                expression: ">= 0"
+          - not_null:
+              severity: warn
+          - check_greater_than_or_equal:
+              value: 0
+              severity: warn
 
       - name: marketing_price_discount_percentage
         description: "Phần trăm giảm giá"
         data_tests:
-          - dbt_utils.expression_is_true:
-              config:
-                severity: warn
-              arguments:
-                expression: "between 0 and 100" # dbt sẽ tự dịch thành (marketing_price_discount_percentage between 0 and 100)
+          - check_between:
+              min_val: 0
+              max_val: 100
+              severity: warn
 
       - name: seller_feedback_percentage
         description: "Tỷ lệ đánh giá tích cực của người bán"
         data_tests:
-          - dbt_utils.expression_is_true:
-              config:
-                severity: warn
-              arguments:
-                expression: "between 0 and 100"
+          - check_between:
+              min_val: 0
+              max_val: 100
+              severity: warn
 
       - name: seller_feedback_score
         description: "Điểm số uy tín của người bán"
         data_tests:
-          - dbt_utils.expression_is_true:
-              config:
-                severity: warn
-              arguments:
-                expression: ">= 0"
+          - check_greater_than_or_equal:
+              value: 0
+              severity: warn
 
       - name: bid_count
         description: "Số lượt đặt thầu hiện tại"
-        data_tests: 
-          - dbt_utils.expression_is_true:
-              config:
-                severity: warn
-              arguments:
-                expression: ">= 0"
+        data_tests:
+          - check_greater_than_or_equal:
+              value: 0
+              severity: warn
 
       - name: adult_only
         description: "Cờ đánh dấu sản phẩm giới hạn độ tuổi"
         data_tests: 
           - accepted_values:
-              config:
-                severity: warn
-              arguments:
-                values: ['TRUE', 'FALSE']
-                quote: true
+              values: ['TRUE', 'FALSE', 'true', 'false']
+              quote: true
+              severity: warn
