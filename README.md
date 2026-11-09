@@ -14,7 +14,6 @@
 6. [Công nghệ sử dụng](#6-công-nghệ-sử-dụng)
 7. [Cấu trúc repository](#7-cấu-trúc-repository)
 8. [Cài đặt và chạy](#8-cài-đặt-và-chạy)
-9. [Trạng thái xác minh](#9-trạng-thái-xác-minh)
 
 
 ---
@@ -248,10 +247,10 @@ ddd/
 │   └── ebay_ingest.py              # Script Python cào dữ liệu từ Ebay API
 ├── jaffle_shop/                    # dbt project
 │   ├── models/
-│   │   ├── staging/                # stg_ebay_raw, ebay_data_cleaned, schema.yml
-│   │   ├── data_quality/           # dq_check
-│   │   ├── intermediate/           # ebay_data_json_expanded
-│   │   └── marts/                  # fact_listing, dim_*, marts.yml
+│   │   ├── staging/                # Chuẩn hóa dữ liệu thô và làm sạch (Silver), kèm khai báo test
+│   │   ├── data_quality/           # kiểm tra chất lượng dữ liệu
+│   │   ├── intermediate/           # Tách các trường JSON lồng nhau thành cột riêng (Silver)
+│   │   └── marts/                  # Mô hình hình sao (Gold): bảng sự kiện, bảng chiều
 │   ├── seeds/
 │   ├── dbt_project.yml
 │   ├── packages.yml
@@ -326,20 +325,3 @@ dbt run   --select ebay_data_json_expanded
 # Gold: fact + dimension + tests
 dbt build --select marts
 ```
-
----
-
-## 9. Trạng thái xác minh
-
-Phân biệt phần đã có bằng chứng chạy thực tế với phần mô tả kiến trúc:
-
-| Thành phần | Trạng thái | Bằng chứng |
-|---|---|---|
-| dbt Silver (staging, dq_check, cleaned, json_expanded) | ✅ Đã chạy | Log `dbt build` / `dbt run` trên target `dev` |
-| dbt Gold (fact + 4 dim) và tests | ✅ Đã chạy | Log `dbt build --select marts`: 16/16 thành công |
-| DAG Airflow, script ingestion | 📁 Có trong repo | `dags/dag_ebay_ingest_pipeline.py`, `include/ebay_ingest.py` |
-| Docker / Astronomer | 📁 Có trong repo | `Dockerfile`, `docker-compose.yml`, `.astro/` |
-| CI/CD | 📁 Có thư mục | `.github/` (nội dung workflow cần đối chiếu) |
-| EC2, S3, `COPY INTO` Bronze, Power BI refresh | 📝 Theo thiết kế kiến trúc | Cần bổ sung log/ảnh chụp cấu hình khi hoàn thiện tài liệu |
-
----
