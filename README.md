@@ -99,51 +99,13 @@ flowchart LR
 
 ## 3. Luồng xử lý trong DAG
 
-Airflow kích hoạt các task theo thứ tự phụ thuộc dưới đây (số task giữ theo thiết kế của dự án).
-
-```mermaid
-flowchart TD
-    T4["Task 4<br/>Gọi eBay API, lưu file thô vào S3"] --> T5["Task 5<br/>COPY INTO: nạp S3 vào Snowflake BRONZE"]
-    T5 --> T6["Task 6<br/>Đọc dữ liệu thô từ BRONZE"]
-    T6 --> T7["Task 7<br/>Làm sạch và kiểm tra chất lượng"]
-    T6 --> T8["Task 8<br/>Bóc tách JSON lồng nhau"]
-    T7 --> T9["Task 9<br/>Tạo bảng Fact / Dim, lưu vào GOLD"]
-    T8 --> T9
-    T9 --> T11["Task 11<br/>Power BI refresh"]
-
-    classDef ingest fill:#dbeafe,stroke:#2563eb,color:#000
-    classDef bronze fill:#f4e1c6,stroke:#b8742a,color:#000
-    classDef silver fill:#e3e6ea,stroke:#6b7480,color:#000
-    classDef gold fill:#fbefb5,stroke:#c9a400,color:#000
-    classDef bi fill:#dcfce7,stroke:#16a34a,color:#000
-    class T4 ingest
-    class T5,T6 bronze
-    class T7,T8 silver
-    class T9 gold
-    class T11 bi
-```
-
-| Task | Việc làm | Tầng |
-|---|---|---|
-| 4 | Script Python gọi eBay API, ghi dữ liệu thô vào S3 (landing zone) | Ingestion |
-| 5 | Snowflake `COPY INTO` nạp file từ S3 vào bảng Bronze | Bronze |
-| 6 | Đọc dữ liệu từ Bronze để chuẩn bị biến đổi | Bronze → Silver |
-| 7 | Làm sạch, chuẩn hóa kiểu dữ liệu, chạy kiểm tra chất lượng | Silver |
-| 8 | Mở rộng (flatten) các trường JSON lồng nhau thành cột dạng bảng | Silver |
-| 9 | Tạo các bảng fact và dimension theo Star Schema | Gold |
-| 11 | Power BI làm mới dữ liệu từ Gold | BI |
-
-**Ánh xạ sang model dbt** (đã chạy thành công, xem log ở [mục 5](#5-kiểm-tra-chất-lượng-dữ-liệu)):
-
-| Task | Model dbt | Schema | Materialization |
-|---|---|---|---|
-| 6 | `stg_ebay_raw` | `SILVER` | view |
-| 7 | `ebay_data_cleaned`, `dq_check` | `SILVER` | incremental |
-| 8 | `ebay_data_json_expanded` | `SILVER` | table |
-| 9 | `fact_listing`, `dim_category`, `dim_condition`, `dim_seller`, `dim_date` | `GOLD` | table |
-
-> Thứ tự task chính xác được định nghĩa trong `dags/dag_ebay_ingest_pipeline.py`, đó là nguồn tham chiếu cuối cùng nếu có khác biệt với sơ đồ trên.
-
+1. Lấy dữ liệu từ eBay: gọi Browse API và Taxonomy API (xác thực OAuth), ghi kết quả thành file Parquet và tải lên Amazon S3, vào thư mục của ngày chạy (năm, tháng, ngày).
+2. Nạp vào Bronze: Snowflake đọc file của ngày chạy từ S3 và ghi vào bảng thô ở tầng Bronze, kèm tên file nguồn và thời điểm nạp. Bản ghi lỗi bị bỏ qua, phần còn lại vẫn được nạp.
+3. Chuẩn hóa dữ liệu thô (Silver): lấy 48 trường từ JSON, ép kiểu dữ liệu và loại trùng, mỗi mã tin đăng chỉ giữ bản ghi mới nhất.
+4. Làm sạch (Silver): loại dòng không hợp lệ (thiếu mã, giá bằng 0, âm hoặc thiếu, ngày tạo muộn hơn ngày kết thúc), chuẩn hóa điểm uy tín người bán, phần trăm giảm giá và các cờ đúng/sai. Song song với bước này, model chất lượng tính 21 quy tắc và ghi kết quả PASS, WARN, FAIL.
+6. Tách JSON lồng nhau (Silver): chuyển 4 trường JSON (mã danh mục lá, cây danh mục, hình thức mua, tùy chọn vận chuyển) thành các cột riêng.
+7. Tạo mô hình hình sao (Gold): tạo bảng sự kiện tin đăng và 4 bảng chiều (danh mục, tình trạng, người bán, ngày), kèm test khóa chính và khóa ngoại.
+8. Làm mới dashboard Power BI: dashboard đọc dữ liệu từ tầng Gold. Bước này mới ở mức thiết kế, bạn chỉ đưa vào nếu đã làm.
 ---
 
 ## 4. Mô hình dữ liệu (Gold)
